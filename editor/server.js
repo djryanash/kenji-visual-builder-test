@@ -13,7 +13,14 @@ const { spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const PORT = process.env.PORT || 5177;
 const CSS_FILE = path.join(ROOT, 'css', 'style.css');
+const LOG_FILE = path.join(__dirname, 'activities.log');
 const EDITOR_JS = () => fs.readFileSync(path.join(__dirname, 'editor.js'), 'utf8');
+
+/* append-only activity log, tail it with: tail -f editor/activities.log */
+function slog(line) {
+  console.log(line);
+  try { fs.appendFileSync(LOG_FILE, new Date().toISOString() + ` ${line}\n`); } catch {}
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -55,13 +62,19 @@ function parseCssRules(text) {
 
 /* ---- Write one property value back into css/style.css ---- */
 function applyEdit({ index, selector, prop, value }) {
-  if (!/^[a-z-]+$/i.test(prop)) return { ok: false, error: 'bad property' };
+  const t0 = Date.now();
+  if (!/^[a-z-]+$/i.test(prop)) {
+    slog(`EDIT REJECT bad-prop "${prop}"`);
+    return { ok: false, error: 'bad property' };
+  }
   const text = fs.readFileSync(CSS_FILE, 'utf8');
   const rules = parseCssRules(text);
   const rule = rules[index];
   const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
-  if (!rule || norm(rule.selector) !== norm(selector)) return { ok: false, resync: true };
-
+  if (!rule || norm(rule.selector) !== norm(selector)) {
+    slog(`EDIT RESYNC #${index} "${selector}" ${prop}:${value} (file has ${rules.length} rules${rule ? `, rule@#${index} is "${rule.selector}"` : ''})`);
+    return { ok: false, resync: true };
+  }
   const body = text.slice(rule.bodyStart, rule.bodyEnd);
   const re = new RegExp(`([^;\\n]*)[;\\n]\\s*${prop}\\s*:\\s*[^;}]*`);
   let newBody;
@@ -76,6 +89,7 @@ function applyEdit({ index, selector, prop, value }) {
       : `  ${prop}: ${value};`;
   }
   fs.writeFileSync(CSS_FILE, text.slice(0, rule.bodyStart) + newBody + text.slice(rule.bodyEnd));
+  slog(`EDIT #${index} "${selector}" ${prop}: ${value} -> written in ${Date.now() - t0}ms`);
   return { ok: true };
 }
 
@@ -127,19 +141,36 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/__editor.js') return serveFile(req, res, path.join(__dirname, 'editor.js'));
 
     if (req.method === 'POST' && url.pathname === '/api/edit') {
-      return res.end(JSON.stringify(applyEdit(await readBody(req))));
+      const body = await readBody(req);
+      slog(`/api/edit <- ${JSON.stringify(body)}`);
+      const result = applyEdit(body);
+      slog(`/api/edit -> ${JSON.stringify(result)}`);
+      return res.end(JSON.stringify(result));
     }
 
     if (req.method === 'POST' && url.pathname === '/api/commit') {
       const { message } = await readBody(req);
-      if (gitClean()) return res.end(JSON.stringify({ ok: true, status: 'clean', output: 'nothing to commit' }));
-      const msg = message && String(message).slice(0, 80) || 'Visual nudges from the local editor';
-      return res.end(JSON.stringify(gitCommit(msg)));
+      slog(`/api/commit "${message || ''}" clean=${gitClean()}`);
+      if (gitClean()) {
+        slog('/api/commit -> nothing to commit');
+        return res.end(JSON.stringify({ ok: true, status: 'clean', output: 'nothing to commit' }));
+      }
+      const msg = (message && String(message).slice(0, 80)) || 'Visual nudges from the local editor';
+      const result = gitCommit(msg);
+      slog(`/api/commit -> ${JSON.stringify(result)}`);
+      return res.end(JSON.stringify(result));
     }
 
     if (req.method === 'POST' && url.pathname === '/api/discard') {
       spawnSync('git', ['checkout', '--', '.'], { cwd: ROOT });
+      slog('/api/discard -> reverted');
       return res.end(JSON.stringify({ ok: true }));
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/log') {
+      try {
+        return res.end(fs.readFileSync(LOG_FILE, 'utf8').split('\n').slice(-200).join('\n'));
+      } catch { return res.end('(no log activity yet)'); }
     }
 
     if (url.pathname.startsWith('/api/')) { res.writeHead(404); return res.end(); }

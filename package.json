@@ -11,5 +11,8 @@
   "dependencies": {
     "@plasmicapp/cli": "^0.1.386",
     "@plasmicapp/react-web": "^1.0.44"
+  },
+  "devDependencies": {
+    "chrome-remote-interface": "^0.34.0"
   }
 }
