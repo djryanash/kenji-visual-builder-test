@@ -1,0 +1,167 @@
+#!/usr/bin/env node
+/*
+ * Kenji local visual editor server.
+ * Serves the static site with an injected nudge editor, writes arrow-key
+ * nudges back into css/style.css on disk, and commits/pushes on request.
+ * Run: npm run dev  (then open http://localhost:5177)
+ */
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const ROOT = path.resolve(__dirname, '..');
+const PORT = process.env.PORT || 5177;
+const CSS_FILE = path.join(ROOT, 'css', 'style.css');
+const EDITOR_JS = () => fs.readFileSync(path.join(__dirname, 'editor.js'), 'utf8');
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.md': 'text/plain; charset=utf-8',
+};
+
+/* ---- CSS parsing: flatten leaf style rules in document order (mirrors the browser's depth-first cssRules walk) ---- */
+function parseCssRules(text) {
+  const rules = [];
+  const stack = [];
+  let headerStart = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '{') {
+      stack.push({ header: text.slice(headerStart, i).trim(), start: i + 1 });
+    } else if (c === '}') {
+      const block = stack.pop();
+      if (block) {
+        const header = block.header.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ').trim();
+        const isLeaf =
+          header !== '' &&
+          !header.startsWith('@') &&
+          !/^(?:\d+(?:\.\d+)?%|from|to)/i.test(header); /* skip containers, @-rules, keyframe frames */
+        if (isLeaf) rules.push({ selector: header.replace(/\s*,\s*/g, ', '), bodyStart: block.start, bodyEnd: i });
+      }
+      headerStart = i + 1;
+    }
+  }
+  return rules;
+}
+
+/* ---- Write one property value back into css/style.css ---- */
+function applyEdit({ index, selector, prop, value }) {
+  if (!/^[a-z-]+$/i.test(prop)) return { ok: false, error: 'bad property' };
+  const text = fs.readFileSync(CSS_FILE, 'utf8');
+  const rules = parseCssRules(text);
+  const rule = rules[index];
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  if (!rule || norm(rule.selector) !== norm(selector)) return { ok: false, resync: true };
+
+  const body = text.slice(rule.bodyStart, rule.bodyEnd);
+  const re = new RegExp(`([^;\\n]*)[;\\n]\\s*${prop}\\s*:\\s*[^;}]*`);
+  let newBody;
+  if (re.test(body)) {
+    newBody = body.replace(re, (m, leading) => `${leading};\n  ${prop}: ${value}`);
+    /* collapse a possible leading ';' when the decl was first in the rule */
+    newBody = newBody.replace(/^\s*;\s*(?=[^\s])/, '');
+  } else {
+    const stripped = body.replace(/\s+$/, '');
+    newBody = stripped
+      ? stripped + (stripped.endsWith(';') ? '' : ';') + `\n  ${prop}: ${value};` + body.slice(stripped.length)
+      : `  ${prop}: ${value};`;
+  }
+  fs.writeFileSync(CSS_FILE, text.slice(0, rule.bodyStart) + newBody + text.slice(rule.bodyEnd));
+  return { ok: true };
+}
+
+/* ---- Git helpers ---- */
+function gitClean() {
+  return spawnSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim() === '';
+}
+function gitCommit(message) {
+  const add = spawnSync('git', ['add', '-A'], { cwd: ROOT, encoding: 'utf8' });
+  if (add.status !== 0) return { ok: false, error: add.stderr };
+  const commit = spawnSync('git', ['commit', '-m', message], { cwd: ROOT, encoding: 'utf8' });
+  if (commit.status !== 0) return { ok: false, error: commit.stderr || commit.stdout };
+  const push = spawnSync('git', ['push'], { cwd: ROOT, encoding: 'utf8' });
+  if (push.status !== 0) return { ok: false, error: push.stderr || push.stdout };
+  return { ok: true, output: push.stdout.split('\n').filter(Boolean).pop() || '' };
+}
+
+/* ---- Static serving with editor injection ---- */
+function serveFile(req, res, file) {
+  let data = fs.readFileSync(file);
+  const ext = path.extname(file);
+  const type = MIME[ext] || 'application/octet-stream';
+  if (ext === '.html') {
+    const inject = `<script src="/__editor.js" defer></script>`;
+    const html = /<\/body>/i.test(data.toString('utf8'))
+      ? data.toString('utf8').replace(/<\/body>/i, `${inject}</body>`)
+      : data.toString('utf8').replace(/<\/html>/i, `${inject}</html>`);
+    data = Buffer.from(html);
+  }
+  res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
+  res.end(data);
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(e); }
+    });
+    req.on('error', reject);
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url, 'http://localhost');
+
+    if (url.pathname === '/__editor.js') return serveFile(req, res, path.join(__dirname, 'editor.js'));
+
+    if (req.method === 'POST' && url.pathname === '/api/edit') {
+      return res.end(JSON.stringify(applyEdit(await readBody(req))));
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/commit') {
+      const { message } = await readBody(req);
+      if (gitClean()) return res.end(JSON.stringify({ ok: true, status: 'clean', output: 'nothing to commit' }));
+      const msg = message && String(message).slice(0, 80) || 'Visual nudges from the local editor';
+      return res.end(JSON.stringify(gitCommit(msg)));
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/discard') {
+      spawnSync('git', ['checkout', '--', '.'], { cwd: ROOT });
+      return res.end(JSON.stringify({ ok: true }));
+    }
+
+    if (url.pathname.startsWith('/api/')) { res.writeHead(404); return res.end(); }
+
+    /* static files */
+    let file = path.join(ROOT, decodeURIComponent(url.pathname)); 
+    if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
+    if (file.includes('/.git/')) { res.writeHead(403); return res.end(); }
+    if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
+    if (!fs.existsSync(file) && fs.existsSync(file + '.html')) file += '.html';
+    if (!fs.existsSync(file)) { res.writeHead(404); return res.end('Not found'); }
+    return serveFile(req, res, file);
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(String(err));
+  }
+});
+
+if (require.main === module) {
+  server.listen(PORT, '127.0.0.1', () =>
+    console.log(`Kenji editor → http://localhost:${PORT}`)
+  );
+}
+
+module.exports = { parseCssRules, applyEdit };

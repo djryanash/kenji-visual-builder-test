@@ -4,6 +4,7 @@
   "private": true,
   "description": "Vanilla HTML/CSS framework for visual builder tests. Static site; no build step.",
   "scripts": {
+    "dev": "node editor/server.js",
     "build": "echo 'Static site, nothing to build' && exit 0",
     "vercel-build": "exit 0"
   },
