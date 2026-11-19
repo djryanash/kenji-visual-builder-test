@@ -15,7 +15,7 @@ A basic framework in vanilla HTML and CSS, created as the starting point for tes
 
 ## Editing
 
-No build step. Open the HTML files and edit them directly, or let Webstudio write to this repo. Deploy happens on push.
+No build step. Open the HTML files and edit them directly, or let a visual builder write to this repo (Plasmic syncs here through its GitHub workflow, the local editor nudges CSS values directly). Deploy happens on push.
 
 ### Local visual editor
 
