@@ -65,9 +65,10 @@
     <div id="ke-target" style="color:#9ca3af;font-size:12px;margin-top:2px">Click an element to select it.</div>
     <div id="ke-note" style="font-size:12px;color:#a7f3d0;min-height:18px;margin-top:2px"></div>
     <div id="ke-loglist" style="display:none;background:#0b1220;border-radius:8px;margin-top:6px;padding:6px 8px;height:150px;overflow:auto;font:10.5px/1.5 ui-monospace, monospace;white-space:pre-wrap"></div>
-    <div style="margin-top:6px;display:flex;gap:8px">
+    <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
       <button id="ke-commit" style="background:#2563eb;color:#fff;border:0;border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer">Commit and push</button>
       <button id="ke-revert" style="background:#374151;color:#e5e7eb;border:0;border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer">Revert file</button>
+      <button id="ke-baseline" title="save the current file as the baseline that ⟲ restores to" style="background:#374151;color:#e5e7eb;border:0;border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer">Set baseline</button>
     </div>
     <div style="font-size:11px;color:#6b7280;margin-top:8px">
       overlay: box shows dimensions, alignment buttons set text-align and flex centering &middot; all shows every CSS property, searchable &middot; click a value to type, up/down to &plusmn;1px (Shift &plusmn;10) &middot; Esc deselect &middot; Alt-click follows links
@@ -220,10 +221,12 @@
 
   /* ---------------- overlay panel rendering ---------------- */
   function rowHtml(prop, fmt) {
-    return `<div class="ke-row" style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:1px 0">
-      <span style="color:#9ca3af">${prop}</span>
+    return `<div class="ke-row" style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:1px 0">
+      <span style="color:#9ca3af;flex:1">${prop}</span>
       <span class="ke-val ke-fmt-${fmt}" data-prop="${prop}" data-fmt="${fmt}" tabindex="0" role="button"
         style="cursor:pointer;background:#0b1220;border-radius:5px;padding:1px 7px;font:11px ui-monospace, monospace;color:#a7f3d0;max-width:150px;overflow:hidden;text-overflow:ellipsis"></span>
+      <button class="ke-reset" data-resetprop="${prop}" title="restore this property from the baseline (or remove it if the baseline never set it)"
+        style="cursor:pointer;border:0;background:transparent;color:#6b7280;border-radius:5px;padding:1px 5px;font:12px sans-serif;flex:none">⟲</button>
     </div>`;
   }
   function rowValue(prop, fmt) {
@@ -281,6 +284,9 @@
         v.onkeydown = (e) => { /* space/enter opens the input too */
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEdit(v, v.dataset.prop); }
         };
+      });
+      rows.querySelectorAll('.ke-reset').forEach((b) => {
+        b.onclick = () => resetProp(b.dataset.resetprop);
       });
       panel.querySelectorAll('.ke-albtn').forEach((b) => {
         b.onclick = () => setAlignment(b.dataset.axis, b.dataset.val);
@@ -381,6 +387,7 @@
       return false;
     }
     const { rule, index, replaced } = target;
+    writeRuleByProp[prop] = rule.selectorText; /* remembered so reset can target the written rule */
     const before = rule.style.getPropertyValue(prop);
     rule.style.setProperty(prop, value, rule.style.getPropertyPriority(prop) || undefined);
     try {
@@ -407,6 +414,33 @@
       pushLog(`api edit failed: ${err}`, true);
       note('Server not reachable on /api/edit. Is npm run dev running?', true);
       return false;
+    }
+  }
+
+  /* per-property memory of the rule the last write touched, for baseline resets */
+  const writeRuleByProp = {};
+
+  async function resetProp(prop) {
+    const selector = writeRuleByProp[prop] || ruleForProp(sel, prop)?.rule?.selectorText;
+    if (!selector) { note(`Cannot find the rule that holds ${prop}.`, true); return; }
+    try {
+      const res = await fetch('/api/reset-prop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selector, prop }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        pushLog(`reset ${prop} → ${data.value != null ? data.value : 'declaration removed'} (baseline, rule "${selector}")`);
+        note(`${prop} restored from baseline: ${data.value != null ? data.value : 'declaration removed'}.`);
+        if (sel) renderPanel(true);
+      } else {
+        pushLog(`reset ${prop} failed: ${data.error}`, true);
+        note(data.error, true);
+      }
+    } catch (err) {
+      pushLog(`api reset failed: ${err}`, true);
+      note('Server not reachable on /api/reset-prop.', true);
     }
   }
 
@@ -463,5 +497,11 @@
     await fetch('/api/discard', { method: 'POST' });
     pushLog('file reverted, reloading');
     setTimeout(() => location.reload(), 400);
+  };
+
+  $('ke-baseline').onclick = async () => {
+    await fetch('/api/set-baseline', { method: 'POST' });
+    pushLog('baseline set from current css/style.css');
+    note('Baseline updated: ⟲ now restores to the current file.');
   };
 })();

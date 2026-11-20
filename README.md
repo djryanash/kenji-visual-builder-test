@@ -23,6 +23,8 @@ No build step. Open the HTML files and edit them directly, or let a visual build
 
 The editor keeps an activity log. In the HUD, `log` toggles the live panel and `copy` copies it; in the browser console, `kenjiEditorLog()` prints it. The server appends its side of every request to `editor/activities.log`, which you can tail with `!tail -f editor/activities.log`, and `http://localhost:5177/api/log` returns the last 200 lines.
 
+Every value row has a ⟲ button that restores that property from the baseline: its value as of the pristine copy in `editor/baseline.css`, or removes the declaration if the baseline never set it. The `Set baseline` button in the HUD saves the current file as that restore point, so after reaching a state worth keeping, mark it and future experiments can always be walked back one property at a time. (Revert still discards everything to the last commit, and the baseline file is local-only, never pushed.)
+
 ## Deploy
 
 Static site, zero configuration on Vercel: the framework detects plain HTML and serves the files as-is. Vercel previews are generated for pull requests, and production deploys follow `main`.

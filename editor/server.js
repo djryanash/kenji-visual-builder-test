@@ -14,6 +14,7 @@ const ROOT = path.resolve(__dirname, '..');
 const PORT = process.env.PORT || 5177;
 const CSS_FILE = path.join(ROOT, 'css', 'style.css');
 const LOG_FILE = path.join(__dirname, 'activities.log');
+const BASELINE = path.join(__dirname, 'baseline.css'); /* pristine CSS restore point, managed by /api/reset-prop and /api/set-baseline */
 const EDITOR_JS = () => fs.readFileSync(path.join(__dirname, 'editor.js'), 'utf8');
 
 /* append-only activity log, tail it with: tail -f editor/activities.log */
@@ -70,7 +71,7 @@ function applyEdit({ index, selector, prop, value }) {
   const text = fs.readFileSync(CSS_FILE, 'utf8');
   const rules = parseCssRules(text);
   const rule = rules[index];
-  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().replace(/\*::/g, '::'); /* Chrome serializes *::before as ::before */
   if (!rule || norm(rule.selector) !== norm(selector)) {
     slog(`EDIT RESYNC #${index} "${selector}" ${prop}:${value} (file has ${rules.length} rules${rule ? `, rule@#${index} is "${rule.selector}"` : ''})`);
     return { ok: false, resync: true };
@@ -91,6 +92,36 @@ function applyEdit({ index, selector, prop, value }) {
   fs.writeFileSync(CSS_FILE, text.slice(0, rule.bodyStart) + newBody + text.slice(rule.bodyEnd));
   slog(`EDIT #${index} "${selector}" ${prop}: ${value} -> written in ${Date.now() - t0}ms`);
   return { ok: true };
+}
+
+/* ---- resolve a rule by its full selector text, independent of file position ---- */
+function findRuleByText(rules, selector) {
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().replace(/\s*,\s*/g, ', ').replace(/\*::/g, '::');
+  for (let i = rules.length - 1; i >= 0; i--) if (norm(rules[i].selector) === norm(selector)) return rules[i];
+  return null;
+}
+
+/* ---- baseline: restore one property to its value from the pristine copy ---- */
+function baselineValueFor(selector, prop) {
+  try {
+    const rules = parseCssRules(fs.readFileSync(BASELINE, 'utf8'));
+    const rule = findRuleByText(rules, selector);
+    if (!rule) return { found: false };
+    const body = fs.readFileSync(BASELINE, 'utf8').slice(rule.bodyStart, rule.bodyEnd);
+    const m = body.match(new RegExp(`(?:^|[;\\n])\\s*${prop}\\s*:\\s*([^;}]+)`));
+    return { found: true, value: m ? m[1].trim() : null };
+  } catch { return { found: false, missing: true }; }
+}
+
+function removeDecl(selector, prop) {
+  const text = fs.readFileSync(CSS_FILE, 'utf8');
+  const rule = findRuleByText(parseCssRules(text), selector);
+  if (!rule) return { ok: false, error: `rule "${selector}" not found in current css/style.css` };
+  const body = text.slice(rule.bodyStart, rule.bodyEnd);
+  const newBody = body.replace(new RegExp(`\\n?[ \\t]*${prop}\\s*:[^;}]*;?`), '');
+  if (newBody === body) return { ok: false, error: `${prop} is not in rule "${selector}"` };
+  fs.writeFileSync(CSS_FILE, text.slice(0, rule.bodyStart) + newBody + text.slice(rule.bodyEnd));
+  return { ok: true, removed: true };
 }
 
 /* ---- Git helpers ---- */
@@ -161,6 +192,37 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify(result));
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/reset-prop') {
+      const { selector, prop } = await readBody(req);
+      const base = baselineValueFor(selector, prop);
+      if (base.missing) {
+        slog(`/api/reset-prop <- no baseline yet (selector "${selector}", ${prop})`);
+        return res.end(JSON.stringify({ ok: false, error: 'no baseline yet: use the baseline button once the file looks right' }));
+      }
+      if (!base.found) {
+        slog(`/api/reset-prop <- rule "${selector}" not in baseline`);
+        return res.end(JSON.stringify({ ok: false, error: `rule "${selector}" is not in the baseline` }));
+      }
+      let result;
+      if (base.value) {
+        const rules = parseCssRules(fs.readFileSync(CSS_FILE, 'utf8'));
+        const rule = findRuleByText(rules, selector);
+        const idx = rules.indexOf(rule);
+        result = rule ? applyEdit({ index: idx, selector, prop, value: base.value })
+                      : { ok: false, error: `rule "${selector}" not in current css/style.css` };
+      } else {
+        result = removeDecl(selector, prop);
+      }
+      slog(`/api/reset-prop "${selector}" ${prop} -> ${JSON.stringify(result)}`);
+      return res.end(JSON.stringify(base.value ? { ...result, value: base.value } : result));
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/set-baseline') {
+      fs.copyFileSync(CSS_FILE, BASELINE);
+      slog('/api/set-baseline -> baseline updated from current css/style.css');
+      return res.end(JSON.stringify({ ok: true }));
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/discard') {
       spawnSync('git', ['checkout', '--', '.'], { cwd: ROOT });
       slog('/api/discard -> reverted');
@@ -191,7 +253,7 @@ const server = http.createServer(async (req, res) => {
 
 if (require.main === module) {
   server.listen(PORT, '127.0.0.1', () =>
-    console.log(`Kenji editor → http://localhost:${PORT}`)
+    console.log(`Kenji editor → http://localhost:${PORT} (baseline: ${fs.existsSync(BASELINE) ? 'present' : 'none yet'})`)
   );
 }
 

@@ -2,4 +2,5 @@
 .vercel
 node_modules/
 editor/activities.log
+editor/baseline.css
 tmp/
