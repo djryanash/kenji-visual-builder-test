@@ -159,7 +159,7 @@
   }
   function allRules() {
     return [...document.styleSheets].flatMap((s) => {
-      if (s.ownerNode === styleEl || s.ownerNode === hud || s.ownerNode === panel) return [];
+      if (s.ownerNode === styleEl || s.ownerNode === hud || s.ownerNode === panel || s.ownerNode === handle) return [];
       try { return flatten(s.cssRules); } catch { return []; }
     });
   }
@@ -205,14 +205,62 @@
   styleEl = document.createElement('style');
   styleEl.textContent =
     '.ke-selected{outline:2px solid #2563eb !important;outline-offset:-2px;}' +
-    /* the editor UI must always sit above every page layer, however they stack */
-    '#kenji-editor,#kenji-panel{position:fixed !important;pointer-events:auto;}' +
-    '#kenji-editor{z-index:2147483647 !important;}' +
-    '#kenji-panel{z-index:2147483646 !important;}';
+    /* editor UI sits above every page layer, immunized against page CSS so universal */
+    /* rules like * { margin: ... } can never move it (the Kenji armor block) */
+    '#kenji-editor,#kenji-panel,#kenji-handle{position:fixed !important;pointer-events:auto;' +
+    'z-index:2147483647 !important;margin:0 !important;box-sizing:border-box !important;' +
+    'font-family:-apple-system,BlinkMacSystemFont,sans-serif !important;line-height:1.5 !important;' +
+    'letter-spacing:normal !important;opacity:1 !important;visibility:visible !important;' +
+    'filter:none !important;transform:none !important;float:none !important;clear:none !important;}' +
+    '#kenji-editor *,#kenji-panel *{box-sizing:border-box;}' +
+    '#kenji-editor{background:rgba(17,24,39,.95) !important;border:0 !important;box-shadow:0 8px 24px rgba(0,0,0,.35) !important;}' +
+    '#kenji-panel{z-index:2147483646 !important;background:rgba(17,24,39,.97) !important;border:0 !important;}';
   document.head.appendChild(styleEl);
 
+  /* ---------------- show/hide handle (the K pill) ---------------- */
+  const handle = document.createElement('div');
+  handle.id = 'kenji-handle';
+  Object.assign(handle.style, {
+    left: '14px', bottom: '14px', width: '30px', height: '30px',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: '#2563eb', color: '#fff', fontWeight: '700', fontSize: '14px',
+    borderRadius: '50%', cursor: 'pointer', userSelect: 'none',
+    boxShadow: '0 4px 12px rgba(0,0,0,.4)',
+  });
+  handle.textContent = 'K';
+  handle.title = 'Show the Kenji Editor (or press Cmd/Ctrl+Shift+E)';
+  document.documentElement.appendChild(handle);
+
+  let editorHidden = false;
+  if (new URLSearchParams(location.search).get('kenji') === '1') {
+    editorHidden = false;
+    try { localStorage.setItem('kenji-editor-hidden', '0'); } catch {}
+  } else {
+    try { editorHidden = localStorage.getItem('kenji-editor-hidden') === '1'; } catch {}
+  }
+  function applyHidden() {
+    hud.style.display = editorHidden ? 'none' : '';
+    panel.style.display = 'none'; /* panel reopens on next selection */
+    handle.style.display = editorHidden ? 'flex' : 'none';
+  }
+  function toggleHidden() {
+    editorHidden = !editorHidden;
+    if (editorHidden) { pushLog('editor hidden'); deselect(); }
+    else pushLog('editor shown');
+    try { localStorage.setItem('kenji-editor-hidden', editorHidden ? '1' : '0'); } catch {}
+    applyHidden();
+  }
+  handle.onclick = toggleHidden;
+  window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'E' || e.key === 'e')) {
+      e.preventDefault();
+      toggleHidden();
+    }
+  });
+  applyHidden();
+
   document.addEventListener('click', (e) => {
-    if (e.target.closest && e.target.closest('#kenji-editor,#kenji-panel')) return;
+    if (e.target.closest && e.target.closest('#kenji-editor,#kenji-panel,#kenji-handle')) return;
     if (e.altKey || e.metaKey || e.ctrlKey) return; /* pass clicks through to real links */
     e.preventDefault();
     e.stopPropagation();
