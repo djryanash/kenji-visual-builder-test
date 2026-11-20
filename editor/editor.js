@@ -59,7 +59,7 @@
       <button id="ke-revert" style="background:#374151;color:#e5e7eb;border:0;border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer">Revert file</button>
     </div>
     <div style="font-size:11px;color:#6b7280;margin-top:8px">
-      overlay: click a dimension to type a value, or tap up/down on it &plusmn;1px (Shift &plusmn;10) &middot; numbers are px, plain units like 2rem pass through, +4/&minus;4 is relative &middot; Esc deselect &middot; Alt-click follows links
+      overlay: click a dimension to type a value, or tap up/down on it &plusmn;1px (Shift &plusmn;10) &middot; alignment buttons set text-align and flex centering &middot; numbers are px, plain units like 2rem pass through, +4/&minus;4 is relative &middot; Esc deselect &middot; Alt-click follows links
     </div>`;
   document.documentElement.appendChild(hud);
 
@@ -74,7 +74,22 @@
     padding: '10px 12px', borderRadius: '10px',
     boxShadow: '0 8px 24px rgba(0,0,0,.35)', maxHeight: '70vh', overflow: 'auto',
   });
-  panel.innerHTML = `<div style="color:#93c5fd;font-size:11px;margin-bottom:4px" id="ke-panel-title">dimensions</div><div id="ke-rows"></div>`;
+  panel.innerHTML = `<div style="color:#93c5fd;font-size:11px;margin-bottom:4px" id="ke-panel-title">dimensions</div><div id="ke-rows"></div>
+    <div style="color:#93c5fd;font-size:11px;margin:6px 0 4px">alignment</div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+      <span style="color:#9ca3af;width:10px">h</span>
+      <button class="ke-albtn" data-axis="h" data-val="left" style="cursor:pointer;border:0;border-radius:5px;padding:1px 9px;font:11px -apple-system, sans-serif;background:#0b1220;color:#a7f3d0">left</button>
+      <button class="ke-albtn" data-axis="h" data-val="center" style="cursor:pointer;border:0;border-radius:5px;padding:1px 9px;font:11px -apple-system, sans-serif;background:#0b1220;color:#a7f3d0">center</button>
+      <button class="ke-albtn" data-axis="h" data-val="right" style="cursor:pointer;border:0;border-radius:5px;padding:1px 9px;font:11px -apple-system, sans-serif;background:#0b1220;color:#a7f3d0">right</button>
+      <span style="color:#6b7280;font-size:10px">text-align</span>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <span style="color:#9ca3af;width:10px">v</span>
+      <button class="ke-albtn" data-axis="v" data-val="top" style="cursor:pointer;border:0;border-radius:5px;padding:1px 9px;font:11px -apple-system, sans-serif;background:#0b1220;color:#a7f3d0">top</button>
+      <button class="ke-albtn" data-axis="v" data-val="center" style="cursor:pointer;border:0;border-radius:5px;padding:1px 9px;font:11px -apple-system, sans-serif;background:#0b1220;color:#a7f3d0">center</button>
+      <button class="ke-albtn" data-axis="v" data-val="bottom" style="cursor:pointer;border:0;border-radius:5px;padding:1px 9px;font:11px -apple-system, sans-serif;background:#0b1220;color:#a7f3d0">bottom</button>
+      <span style="color:#6b7280;font-size:10px">flex + align-items</span>
+    </div>`;
   document.documentElement.appendChild(panel);
 
   const $ = (id) => hud.querySelector('#' + id);
@@ -223,11 +238,42 @@
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEdit(v, v.dataset.prop); }
         };
       });
+      panel.querySelectorAll('.ke-albtn').forEach((b) => {
+        b.onclick = () => setAlignment(b.dataset.axis, b.dataset.val);
+      });
     }
     rows.querySelectorAll('[data-prop]').forEach((v) => {
       if (v.classList.contains('ke-val') && !v.querySelector('input')) v.textContent = fmtVal(v.dataset.prop);
     });
+    refreshAlignment();
     positionPanel();
+  }
+
+  /* alignment buttons: horizontal = text-align, vertical = flex + align-items.
+     Active states are derived from computed styles so the truth is always on screen.  */
+  const TA_MAP = { left: 'left', start: 'left', center: 'center', right: 'right', end: 'right' };
+  const AI_MAP = { 'flex-start': 'top', center: 'center', 'flex-end': 'bottom' };
+  function refreshAlignment() {
+    if (!sel) return;
+    const cs = getComputedStyle(sel);
+    const ta = TA_MAP[cs.textAlign] || '';
+    const ai = cs.display === 'flex' ? AI_MAP[cs.alignItems] || '' : '';
+    panel.querySelectorAll('.ke-albtn').forEach((b) => {
+      const active = b.dataset.axis === 'h' ? ta === b.dataset.val : ai === b.dataset.val;
+      b.style.background = active ? '#2563eb' : '#0b1220';
+      b.style.color = '#fff';
+    });
+  }
+  async function setAlignment(axis, val) {
+    if (axis === 'h') {
+      pushLog(`align horizontal: text-align ${val}`);
+      await writeValue('text-align', val);
+    } else {
+      pushLog(`align vertical: display flex + align-items ${val}`);
+      if (await writeValue('display', 'flex'))
+        await writeValue('align-items', val === 'top' ? 'flex-start' : val === 'bottom' ? 'flex-end' : 'center');
+    }
+    if (sel) renderPanel(true);
   }
 
   function closeEdit(input) {
@@ -297,7 +343,7 @@
       editCount++;
       updEdits();
       note(`${prop}: ${data.written || value}`);
-      pushLog(`settled ${prop} = ${fmtVal(prop)} on disk`);
+      pushLog(`settled ${prop} = ${getComputedStyle(sel).getPropertyValue(prop).trim()} on disk`);
       renderPanel(true);
       return true;
     } catch (err) {
