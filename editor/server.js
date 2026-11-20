@@ -11,12 +11,16 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-/* config.json sits beside server.js: { "cssFile": "css/style.css", "port": 5177 } */
+/* editor.config.json sits beside server.js: { "cssFile": "css/style.css", "port": 5177 }.
+   config.json (unnamespaced) is read only as a legacy fallback and never written. */
 const CFG = (() => {
-  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')); } catch { return {}; }
+  for (const name of ['editor.config.json', 'config.json']) {
+    try { return JSON.parse(fs.readFileSync(path.join(__dirname, name), 'utf8')); } catch {}
+  }
+  return {};
 })();
 const PORT = process.env.PORT || CFG.port || 5177;
-const CSS_FILE = path.join(ROOT, CFG.cssFile || 'css/style.css');
+const CSS_FILE = path.join(ROOT, process.env.KENJI_CSS || CFG.cssFile || 'css/style.css');
 const LOG_FILE = path.join(__dirname, 'activities.log');
 const BASELINE = path.join(__dirname, 'baseline.css'); /* pristine CSS restore point, managed by /api/reset-prop and /api/set-baseline */
 const EDITOR_JS = () => fs.readFileSync(path.join(__dirname, 'editor.js'), 'utf8');

@@ -212,9 +212,17 @@
     'font-family:-apple-system,BlinkMacSystemFont,sans-serif !important;line-height:1.5 !important;' +
     'letter-spacing:normal !important;opacity:1 !important;visibility:visible !important;' +
     'filter:none !important;transform:none !important;float:none !important;clear:none !important;}' +
-    '#kenji-editor *,#kenji-panel *{box-sizing:border-box;}' +
-    '#kenji-editor{background:rgba(17,24,39,.95) !important;border:0 !important;box-shadow:0 8px 24px rgba(0,0,0,.35) !important;}' +
-    '#kenji-panel{z-index:2147483646 !important;background:rgba(17,24,39,.97) !important;border:0 !important;}';
+    '#kenji-editor *,#kenji-panel *,#kenji-handle *{' +
+    /* full child armor: whatever a page writes onto * and element selectors, */
+    /* the editor UI keeps its own box model and typography */
+    'margin:0;padding:0;float:none;clear:none;box-sizing:border-box;' +
+    'font:inherit;letter-spacing:inherit;line-height:inherit;color:inherit;' +
+    'text-decoration:none;text-align:inherit;background:none;border:0;' +
+    'box-shadow:none;text-shadow:none;min-width:0;min-height:0;}' +
+    '#kenji-handle{width:30px !important;height:30px !important;align-items:center !important;justify-content:center !important;background:#2563eb !important;color:#fff !important;font-weight:700 !important;font-size:14px !important;border-radius:50% !important;cursor:pointer !important;}' +
+    '#kenji-editor *,#kenji-panel *::before,#kenji-panel *::after,#kenji-handle *::before{content:none;}' +
+    '#kenji-editor{background:rgba(17,24,39,.95)!important;border:0!important;box-shadow:0 8px 24px rgba(0,0,0,.35)!important;}' +
+    '#kenji-panel{z-index:2147483646!important;background:rgba(17,24,39,.97)!important;border:0!important;}';;
   document.head.appendChild(styleEl);
 
   /* ---------------- show/hide handle (the K pill) ---------------- */
