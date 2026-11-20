@@ -60,7 +60,8 @@ h1, h2, h3 {
 }
 
 h1 { font-size: 2.25rem; }
-h2 { font-size: 1.6rem; }
+h2 { font-size: 1.6rem;
+  text-align: left; }
 h3 { font-size: 1.15rem; }
 
 p {
@@ -191,6 +192,9 @@ code {
 .feature-card p {
   color: var(--color-text-soft);
   margin-bottom: 0;
+  text-align: center;
+  display: flex;
+  align-items: center;
 }
 
 /* ----------------------------------------

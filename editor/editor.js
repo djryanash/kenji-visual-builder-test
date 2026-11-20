@@ -8,6 +8,17 @@
     'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
   ];
 
+  /* every property the all-properties view lists, by group */
+  const ALL_PROPS = {
+    'layout & display': ['display', 'position', 'top', 'right', 'bottom', 'left', 'z-index', 'float', 'clear', 'overflow', 'overflow-x', 'overflow-y', 'visibility', 'opacity', 'box-sizing', 'aspect-ratio'],
+    'flexbox': ['flex-direction', 'flex-wrap', 'justify-content', 'align-items', 'align-content', 'align-self', 'flex-grow', 'flex-shrink', 'flex-basis', 'gap', 'row-gap', 'column-gap', 'order'],
+    'grid': ['grid-template-columns', 'grid-template-rows', 'grid-column', 'grid-row', 'grid-auto-flow', 'place-items'],
+    'spacing & size': ['width', 'min-width', 'max-width', 'height', 'min-height', 'max-height', 'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'object-fit'],
+    'typography': ['color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'text-decoration-line', 'text-transform', 'text-indent', 'white-space', 'word-break', 'text-shadow', 'vertical-align'],
+    'background & borders': ['background-color', 'background-image', 'background-size', 'background-position', 'background-repeat', 'border', 'border-radius', 'border-top', 'border-bottom', 'outline', 'outline-offset', 'box-shadow', 'filter', 'transform', 'cursor'],
+  };
+  let viewMode = 'box';
+
   let sel = null;
   let editCount = 0;
   let overlayOn = false;
@@ -59,7 +70,7 @@
       <button id="ke-revert" style="background:#374151;color:#e5e7eb;border:0;border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer">Revert file</button>
     </div>
     <div style="font-size:11px;color:#6b7280;margin-top:8px">
-      overlay: click a dimension to type a value, or tap up/down on it &plusmn;1px (Shift &plusmn;10) &middot; alignment buttons set text-align and flex centering &middot; numbers are px, plain units like 2rem pass through, +4/&minus;4 is relative &middot; Esc deselect &middot; Alt-click follows links
+      overlay: box shows dimensions, alignment buttons set text-align and flex centering &middot; all shows every CSS property, searchable &middot; click a value to type, up/down to &plusmn;1px (Shift &plusmn;10) &middot; Esc deselect &middot; Alt-click follows links
     </div>`;
   document.documentElement.appendChild(hud);
 
@@ -74,7 +85,19 @@
     padding: '10px 12px', borderRadius: '10px',
     boxShadow: '0 8px 24px rgba(0,0,0,.35)', maxHeight: '70vh', overflow: 'auto',
   });
-  panel.innerHTML = `<div style="color:#93c5fd;font-size:11px;margin-bottom:4px" id="ke-panel-title">dimensions</div><div id="ke-rows"></div>
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">
+      <div id="ke-panel-title" style="color:#93c5fd;font-size:11px;overflow:hidden;text-overflow:ellipsis">selected</div>
+      <span style="display:flex;gap:4px;flex:none">
+        <button id="ke-tab-box" class="ke-tab" style="cursor:pointer;border:0;border-radius:6px;padding:2px 10px;font-size:11px;background:#2563eb;color:#fff">box</button>
+        <button id="ke-tab-all" class="ke-tab" style="cursor:pointer;border:0;border-radius:6px;padding:2px 10px;font-size:11px;background:#1f2937;color:#9ca3af">all</button>
+      </span>
+    </div>
+    <div id="ke-filterwrap" style="display:none;margin-bottom:5px">
+      <input id="ke-filter" placeholder="filter properties…" style="width:100%;box-sizing:border-box;background:#111c33;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:3px 8px;font:11.5px -apple-system, sans-serif;outline:none">
+    </div>
+    <div id="ke-rows"></div>
+    <div id="ke-align">
     <div style="color:#93c5fd;font-size:11px;margin:6px 0 4px">alignment</div>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
       <span style="color:#9ca3af;width:10px">h</span>
@@ -89,10 +112,10 @@
       <button class="ke-albtn" data-axis="v" data-val="center" style="cursor:pointer;border:0;border-radius:5px;padding:1px 9px;font:11px -apple-system, sans-serif;background:#0b1220;color:#a7f3d0">center</button>
       <button class="ke-albtn" data-axis="v" data-val="bottom" style="cursor:pointer;border:0;border-radius:5px;padding:1px 9px;font:11px -apple-system, sans-serif;background:#0b1220;color:#a7f3d0">bottom</button>
       <span style="color:#6b7280;font-size:10px">flex + align-items</span>
-    </div>`;
+    </div></div>`;
   document.documentElement.appendChild(panel);
 
-  const $ = (id) => hud.querySelector('#' + id);
+  const $ = (id) => hud.querySelector('#' + id) || document.getElementById(id); /* HUD and panel both live in the DOM */
   const note = (msg, bad) => {
     $('ke-note').textContent = msg;
     $('ke-note').style.color = bad ? '#fca5a5' : '#a7f3d0';
@@ -169,7 +192,7 @@
     $('ke-target').textContent = labelFor(el);
     note('');
     pushLog(`select ${labelFor(el)}`);
-    if (overlayOn) renderPanel(true);
+    if (overlayOn) renderPanel(false);
   }
   function deselect() {
     if (sel) sel.classList.remove('ke-selected');
@@ -196,6 +219,17 @@
   }, true);
 
   /* ---------------- overlay panel rendering ---------------- */
+  function rowHtml(prop, fmt) {
+    return `<div class="ke-row" style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:1px 0">
+      <span style="color:#9ca3af">${prop}</span>
+      <span class="ke-val ke-fmt-${fmt}" data-prop="${prop}" data-fmt="${fmt}" tabindex="0" role="button"
+        style="cursor:pointer;background:#0b1220;border-radius:5px;padding:1px 7px;font:11px ui-monospace, monospace;color:#a7f3d0;max-width:150px;overflow:hidden;text-overflow:ellipsis"></span>
+    </div>`;
+  }
+  function rowValue(prop, fmt) {
+    const computed = getComputedStyle(sel).getPropertyValue(prop).trim();
+    return fmt === 'px' ? fmtVal(prop) : computed;
+  }
   function positionPanel() {
     if (!sel || panel.style.display === 'none') return;
     const r = sel.getBoundingClientRect();
@@ -223,15 +257,25 @@
     if (!sel) { panel.style.display = 'none'; return; }
     panel.style.display = 'block';
     document.getElementById('ke-panel-title').textContent = labelFor(sel);
+    document.getElementById('ke-tab-box').style.background = viewMode === 'box' ? '#2563eb' : '#1f2937';
+    document.getElementById('ke-tab-box').style.color = '#fff';
+    document.getElementById('ke-tab-all').style.background = viewMode === 'all' ? '#2563eb' : '#1f2937';
+    document.getElementById('ke-tab-all').style.color = '#fff';
+    document.getElementById('ke-filterwrap').style.display = viewMode === 'all' ? 'block' : 'none';
+    document.getElementById('ke-align').style.display = viewMode === 'box' ? 'block' : 'none';
     const rows = document.getElementById('ke-rows');
     if (!refreshValuesOnly) {
-      rows.innerHTML = DIMENSIONS.map(
-        (p) => `<div class="ke-row" style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:1px 0">
-          <span style="color:#9ca3af">${p}</span>
-          <span class="ke-val" data-prop="${p}" tabindex="0" role="button"
-            style="cursor:pointer;background:#0b1220;border-radius:5px;padding:1px 7px;font:11.5px ui-monospace, monospace;color:#a7f3d0">${fmtVal(p)}</span>
-        </div>`
-      ).join('');
+      if (viewMode === 'box') {
+        rows.innerHTML = DIMENSIONS.map((p) => rowHtml(p, 'px')).join('');
+      } else {
+        const q = document.getElementById('ke-filter').value.trim().toLowerCase();
+        rows.innerHTML = Object.entries(ALL_PROPS).map(([group, props]) => {
+          const hits = props.filter((p) => !q || p.includes(q));
+          if (!hits.length) return '';
+          return `<div style="color:#93c5fd;font-size:10.5px;margin:5px 0 2px">${group}</div>` +
+            hits.map((p) => rowHtml(p, 'raw')).join('');
+        }).join('') || '<div style="color:#6b7280;font-size:11px">no properties match the filter</div>';
+      }
       rows.querySelectorAll('.ke-val').forEach((v) => {
         v.onclick = () => startEdit(v, v.dataset.prop);
         v.onkeydown = (e) => { /* space/enter opens the input too */
@@ -243,10 +287,18 @@
       });
     }
     rows.querySelectorAll('[data-prop]').forEach((v) => {
-      if (v.classList.contains('ke-val') && !v.querySelector('input')) v.textContent = fmtVal(v.dataset.prop);
+      if (v.classList.contains('ke-val') && !v.querySelector('input'))
+        v.textContent = rowValue(v.dataset.prop, v.dataset.fmt);
     });
     refreshAlignment();
     positionPanel();
+  }
+
+  function setView(mode) {
+    if (viewMode === mode) return;
+    viewMode = mode;
+    pushLog(`panel view: ${mode}`);
+    renderPanel(false);
   }
 
   /* alignment buttons: horizontal = text-align, vertical = flex + align-items.
@@ -278,7 +330,7 @@
 
   function closeEdit(input) {
     const row = input.closest('[data-prop]');
-    row.textContent = fmtVal(row.dataset.prop);
+    row.textContent = rowValue(row.dataset.prop, row.dataset.fmt);
     row.classList.add('ke-val');
     row.tabIndex = 0;
   }
@@ -286,9 +338,10 @@
   function startEdit(valEl, prop) {
     if (valEl.querySelector('input')) return;
     valEl.classList.remove('ke-val');
-    const cur = (parseFloat(getComputedStyle(sel)[camel(prop)]) || 0).toString();
+    const fmt = valEl.dataset.fmt;
+    const cur = rowValue(prop, fmt);
     valEl.innerHTML = `<input class="ke-input" value="${escapeHtml(cur)}"
-      style="width:70px;background:#111c33;color:#e5e7eb;border:1px solid #2563eb;border-radius:4px;padding:1px 5px;font:11.5px ui-monospace, monospace;outline:none">`;
+      style="width:90px;background:#111c33;color:#e5e7eb;border:1px solid #2563eb;border-radius:4px;padding:1px 5px;font:11px ui-monospace, monospace;outline:none">`;
     const input = valEl.querySelector('input');
     input.focus();
     input.select();
@@ -296,8 +349,10 @@
     async function apply(raw, rel) {
       let value;
       if (rel) value = rel + 'px';
-      else if (/^[+-]\d+(\.\d+)?$/.test(raw.trim())) value = (parseFloat(cur) + parseFloat(raw)) + 'px';
-      else if (/^-?\d+(\.\d+)?$/.test(raw.trim())) value = parseFloat(raw) + 'px';
+      else if (/^[+-]\d+(\.\d+)?$/.test(raw.trim())) {
+        const base = parseFloat(cur);
+        value = (isNaN(base) ? parseFloat(raw) : base + parseFloat(raw)) + 'px';
+      } else if (/^-?\d+(\.\d+)?$/.test(raw.trim())) value = parseFloat(raw) + 'px';
       else value = raw.trim();
       await writeValue(prop, value);
     }
@@ -307,8 +362,10 @@
       if (e.key === 'Enter') { e.preventDefault(); await apply(input.value); closeEdit(input); return; }
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
+        const base = parseFloat(input.value);
+        if (isNaN(base)) { pushLog(`tap skipped: ${prop} is "${input.value}", not a number. Type a value instead.`); return; }
         const step = e.shiftKey ? 10 : 1;
-        const next = (parseFloat(input.value) || 0) + (e.key === 'ArrowUp' ? step : -step);
+        const next = base + (e.key === 'ArrowUp' ? step : -step);
         input.value = next;
         await apply(String(next), next);
       }
@@ -362,6 +419,16 @@
     if (overlayOn && sel) renderPanel(false);
     else panel.style.display = 'none';
   };
+
+  /* panel tabs + filter (assigned once; the elements exist in the initial markup) */
+  $('ke-tab-box').onclick = () => setView('box');
+  $('ke-tab-all').onclick = () => setView('all');
+  const filterEl = document.getElementById('ke-filter');
+  filterEl.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); renderPanel(false); }
+    e.stopPropagation(); /* keep Esc from deselecting while filtering */
+  };
+  filterEl.oninput = () => renderPanel(false);
 
   window.addEventListener('resize', positionPanel);
   window.addEventListener('scroll', positionPanel, true);
